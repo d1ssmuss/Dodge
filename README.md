@@ -25,7 +25,7 @@
 1. Установите [Python 3.12](https://www.python.org/downloads/) или новее
 2. Установите зависимости:
    ```bash
-   pip install pygame pyautogui
+   pip install -r requirements.txt
    ```
 3. Запустите игру:
    ```bash
