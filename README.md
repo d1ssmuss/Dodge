@@ -23,11 +23,15 @@
 ## Как запустить
 
 1. Установите [Python 3.12](https://www.python.org/downloads/) или новее
-2. Установите зависимости:
+2. В терминале ввести команду:
+   ```bash
+   git clone https://github.com/d1ssmuss/Dodge
+   ```
+3. Установите зависимости:
    ```bash
    pip install -r requirements.txt
    ```
-3. Запустите игру:
+4. Запустите игру:
    ```bash
    python dodgem.py
    ```
