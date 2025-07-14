@@ -3,6 +3,7 @@ import sys
 import pyautogui
 import pickle
 import os
+import json  # Для сохранения данных пользователей
 
 # Инициализация pygame
 pg.init()
@@ -15,18 +16,24 @@ BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 GRAY = (100, 100, 100)
 GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+BLUE = (0, 120, 255)
+LIGHT_BLUE = (173, 216, 230)
 
 # Шрифты
 title_font = pg.font.SysFont('Tahoma', 72)
-menu_font = pg.font.SysFont('Times New Roman', 48)
+menu_font = pg.font.SysFont('Times New Roman', 42)
 message_font = pg.font.SysFont('Tahoma', 36)
 rules_font = pg.font.SysFont('Tahoma', 23)
+input_font = pg.font.SysFont('Arial', 32)
 
 # Состояния игры
 MENU = 0
 GAME = 1
-RULES = 2  # Новое состояние для экрана правил
-game_state = MENU
+RULES = 2
+LOGIN = 3
+REGISTER = 4
+game_state = LOGIN  # Начинаем с экрана входа
 
 # Остальные настройки игры
 icon = pg.image.load('icon32.png')
@@ -62,6 +69,206 @@ image_white = pg.image.load(white_checker).convert_alpha()
 img_w = pg.transform.smoothscale(image_white, (140, 140))
 image_black = pg.image.load(black_checker).convert_alpha()
 img_b = pg.transform.smoothscale(image_black, (140, 140))
+
+
+
+# Файл для сохранения пользователей
+USERS_FILE = 'dodgem_users.json'
+
+
+# Класс для текстового ввода
+class TextInput:
+    def __init__(self, x, y, width, height, placeholder='', is_password=False):
+        self.rect = pg.Rect(x, y, width, height)
+        self.text = ''
+        self.active = False
+        self.placeholder = placeholder
+        self.is_password = is_password
+        self.color_inactive = pg.Color('lightskyblue3')
+        self.color_active = pg.Color('dodgerblue2')
+        self.color = self.color_inactive
+        self.txt_surface = input_font.render(placeholder, True, (150, 150, 150))
+
+    def handle_event(self, event):
+        if event.type == pg.MOUSEBUTTONDOWN:
+            # Если пользователь щелкнул по полю ввода
+            self.active = self.rect.collidepoint(event.pos)
+            # Изменение цвета поля ввода
+            self.color = self.color_active if self.active else self.color_inactive
+            if self.active and self.text == '':
+                self.text = ''
+                self.txt_surface = input_font.render('', True, BLACK)
+
+        if event.type == pg.KEYDOWN:
+            if self.active:
+                if event.key == pg.K_RETURN:
+                    return True
+                elif event.key == pg.K_BACKSPACE:
+                    self.text = self.text[:-1]
+                else:
+                    self.text += event.unicode
+
+                # Отображение звездочек для пароля
+                if self.is_password:
+                    display_text = '*' * len(self.text)
+                else:
+                    display_text = self.text
+
+                self.txt_surface = input_font.render(display_text, True, BLACK)
+        return False
+
+    def draw(self, screen):
+        # Рисуем поле ввода
+        pg.draw.rect(screen, self.color, self.rect, 0)
+        pg.draw.rect(screen, BLACK, self.rect, 2)
+        # Рисуем текст
+        screen.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + 10))
+
+        # Отображаем плейсхолдер, если текст пустой
+        if self.text == '' and not self.active:
+            placeholder_surf = input_font.render(self.placeholder, True, (150, 150, 150))
+            screen.blit(placeholder_surf, (self.rect.x + 5, self.rect.y + 10))
+
+    def get_text(self):
+        return self.text
+
+
+# Шифрование пароля шифром Цезаря
+def caesar_encrypt(text, shift=3):
+    result = ""
+    for char in text:
+        if char.isalpha():
+            # Определяем базовый символ в зависимости от регистра
+            base = 'a' if char.islower() else 'A'
+            # Шифруем символ
+            result += chr((ord(char) - ord(base) + shift) % 26 + ord(base))
+        else:
+            result += char
+    return result
+
+
+# Дешифрование пароля
+def caesar_decrypt(text, shift=3):
+    return caesar_encrypt(text, -shift)
+
+
+# Загрузка пользователей из файла
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, 'r') as f:
+                users = json.load(f)
+                # Дешифруем пароли при загрузке
+                for username, data in users.items():
+                    data['password'] = caesar_decrypt(data['password'])
+                return users
+        except:
+            return {}
+    return {}
+
+
+# Сохранение пользователей в файл
+def save_users(users):
+    # Создаем копию для шифрования паролей
+    encrypted_users = {}
+    for username, data in users.items():
+        encrypted_users[username] = {
+            'password': caesar_encrypt(data['password'])
+        }
+
+    with open(USERS_FILE, 'w') as f:
+        json.dump(encrypted_users, f)
+
+
+# Текущий пользователь
+current_user = None
+
+# Создаем поля ввода для экранов логина и регистрации
+login_username = TextInput(330, 300, 300, 50, 'Имя пользователя')
+login_password = TextInput(330, 400, 300, 50, 'Пароль', is_password=True)
+register_username = TextInput(330, 250, 300, 50, 'Имя пользователя')
+register_password = TextInput(330, 350, 300, 50, 'Пароль', is_password=True)
+register_confirm = TextInput(330, 450, 300, 50, 'Подтвердите пароль', is_password=True)
+
+# Сообщения об ошибках
+login_error = ''
+register_error = ''
+
+# Загружаем пользователей
+users = load_users()
+
+
+def draw_login_screen():
+    """Отрисовывает экран входа"""
+    screen.fill(LIGHT_BLUE)
+
+    # Заголовок
+    title = title_font.render("Вход в систему", True, BLUE)
+    title_rect = title.get_rect(center=(screen.get_width() // 2, 150))
+    screen.blit(title, title_rect)
+
+    # Поля ввода
+    login_username.draw(screen)
+    login_password.draw(screen)
+
+    # Кнопка входа
+    login_btn = pg.Rect(380, 500, 200, 60)
+    pg.draw.rect(screen, GREEN, login_btn, border_radius=15)
+    login_text = menu_font.render("Войти", True, WHITE)
+    login_text_rect = login_text.get_rect(center=login_btn.center)
+    screen.blit(login_text, login_text_rect)
+
+    # Кнопка регистрации
+    register_btn = pg.Rect(330, 600, 300, 60)
+    pg.draw.rect(screen, BLUE, register_btn, border_radius=15)
+    register_text = menu_font.render("Регистрация", True, WHITE)
+    register_text_rect = register_text.get_rect(center=register_btn.center)
+    screen.blit(register_text, register_text_rect)
+
+    # Сообщение об ошибке
+    if login_error:
+        error_text = message_font.render(login_error, True, RED)
+        error_rect = error_text.get_rect(center=(screen.get_width() // 2, 580))
+        screen.blit(error_text, error_rect)
+
+    return login_btn, register_btn
+
+
+def draw_register_screen():
+    """Отрисовывает экран регистрации"""
+    screen.fill(LIGHT_BLUE)
+
+    # Заголовок
+    title = title_font.render("Регистрация", True, BLUE)
+    title_rect = title.get_rect(center=(screen.get_width() // 2, 150))
+    screen.blit(title, title_rect)
+
+    # Поля ввода
+    register_username.draw(screen)
+    register_password.draw(screen)
+    register_confirm.draw(screen)
+
+    # Кнопка регистрации
+    register_btn = pg.Rect(280, 550, 400, 60)
+    pg.draw.rect(screen, GREEN, register_btn, border_radius=15)
+    register_text = menu_font.render("Зарегистрироваться", True, WHITE)
+    register_text_rect = register_text.get_rect(center=register_btn.center)
+    screen.blit(register_text, register_text_rect)
+
+    # Кнопка назад
+    back_btn = pg.Rect(380, 650, 200, 60)
+    pg.draw.rect(screen, GRAY, back_btn, border_radius=15)
+    back_text = menu_font.render("Назад", True, WHITE)
+    back_text_rect = back_text.get_rect(center=back_btn.center)
+    screen.blit(back_text, back_text_rect)
+
+    # Сообщение об ошибке
+    if register_error:
+        error_text = message_font.render(register_error, True, RED)
+        error_rect = error_text.get_rect(center=(screen.get_width() // 2, 520))
+        screen.blit(error_text, error_rect)
+
+    return register_btn, back_btn
 
 
 def check_win_condition():
@@ -318,9 +525,25 @@ def draw_save_message():
         screen.blit(message, message_rect)
 
 
+# В главном меню добавим отображение текущего пользователя
 def draw_menu():
     """Отрисовывает главное меню"""
     screen.fill(BLACK)
+
+    # Отображаем текущего пользователя
+    if current_user:
+        user_text = message_font.render(f"Пользователь: {current_user}", True, GREEN)
+        screen.blit(user_text, (20, 20))
+
+    # Кнопка выхода из аккаунта
+    if current_user:
+        logout_btn = pg.Rect(700, 20, 240, 40)
+        pg.draw.rect(screen, RED, logout_btn, border_radius=10)
+        logout_text = rules_font.render("Выйти из аккаунта", True, WHITE)
+        logout_rect = logout_text.get_rect(center=logout_btn.center)
+        screen.blit(logout_text, logout_rect)
+    else:
+        logout_btn = None
 
     # Название игры
     title = title_font.render("Доджем", True, WHITE)
@@ -349,7 +572,7 @@ def draw_menu():
     exit_rect = exit_text.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2 + 200))
     screen.blit(exit_text, exit_rect)
 
-    return start_rect, rules_rect, load_game_rect, exit_rect
+    return start_rect, rules_rect, load_game_rect, exit_rect, logout_btn
 
 
 def draw_rules():
@@ -416,15 +639,139 @@ def handle_menu_click(pos, start_rect, rules_rect, load_game_rect, exit_rect):
 running = True
 valid_moves = []
 while running:
-    if game_state == MENU:
-        start_rect, rules_rect, load_game_rect, exit_rect = draw_menu()
+    if game_state == LOGIN:
+        login_btn, register_btn = draw_login_screen()
+
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                running = False
+
+            # Обработка ввода текста
+            login_username.handle_event(event)
+            if login_password.handle_event(event):
+                # Если нажат Enter в поле пароля, пытаемся войти
+                username = login_username.get_text()
+                password = login_password.get_text()
+
+                if username in users and users[username]['password'] == password:
+                    current_user = username
+                    game_state = MENU
+                    login_error = ''
+                else:
+                    login_error = 'Неверное имя пользователя или пароль'
+
+            if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+                if login_btn.collidepoint(event.pos):
+                    username = login_username.get_text()
+                    password = login_password.get_text()
+
+                    if username in users and users[username]['password'] == password:
+                        current_user = username
+                        game_state = MENU
+                        login_error = ''
+                    else:
+                        login_error = 'Неверное имя пользователя или пароль'
+
+                if register_btn.collidepoint(event.pos):
+                    game_state = REGISTER
+                    register_error = ''
+                    # Сброс полей регистрации
+                    register_username.text = ''
+                    register_password.text = ''
+                    register_confirm.text = ''
+                    register_username.txt_surface = input_font.render('', True, BLACK)
+                    register_password.txt_surface = input_font.render('', True, BLACK)
+                    register_confirm.txt_surface = input_font.render('', True, BLACK)
+
+    elif game_state == REGISTER:
+        register_btn, back_btn = draw_register_screen()
+
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                running = False
+
+            # Обработка ввода текста
+            register_username.handle_event(event)
+            register_password.handle_event(event)
+            if register_confirm.handle_event(event):
+                # Если нажат Enter в поле подтверждения, пытаемся зарегистрироваться
+                username = register_username.get_text()
+                password = register_password.get_text()
+                confirm = register_confirm.get_text()
+
+                if not username:
+                    register_error = 'Введите имя пользователя'
+                elif username in users:
+                    register_error = 'Имя пользователя занято'
+                elif not password:
+                    register_error = 'Введите пароль'
+                elif password != confirm:
+                    register_error = 'Пароли не совпадают'
+                else:
+                    # Регистрируем нового пользователя
+                    users[username] = {'password': password}
+                    save_users(users)
+                    current_user = username
+                    game_state = MENU
+                    register_error = ''
+
+            if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+                if register_btn.collidepoint(event.pos):
+                    username = register_username.get_text()
+                    password = register_password.get_text()
+                    confirm = register_confirm.get_text()
+
+                    if not username:
+                        register_error = 'Введите имя пользователя'
+                    elif username in users:
+                        register_error = 'Имя пользователя занято'
+                    elif not password:
+                        register_error = 'Введите пароль'
+                    elif password != confirm:
+                        register_error = 'Пароли не совпадают'
+                    else:
+                        # Регистрируем нового пользователя
+                        users[username] = {'password': password}
+                        save_users(users)
+                        current_user = username
+                        game_state = MENU
+                        register_error = ''
+
+                if back_btn.collidepoint(event.pos):
+                    game_state = LOGIN
+                    login_error = ''
+                    # Сброс полей логина
+                    login_username.text = ''
+                    login_password.text = ''
+                    login_username.txt_surface = input_font.render('', True, BLACK)
+                    login_password.txt_surface = input_font.render('', True, BLACK)
+
+    elif game_state == MENU:
+        start_rect, rules_rect, load_game_rect, exit_rect, logout_btn = draw_menu()
 
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 running = False
             elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
-                handle_menu_click(event.pos, start_rect, rules_rect, load_game_rect, exit_rect)
-
+                pos = event.pos
+                if logout_btn and logout_btn.collidepoint(pos):
+                    current_user = None
+                    game_state = LOGIN
+                    # Сброс полей логина
+                    login_username.text = ''
+                    login_password.text = ''
+                    login_username.txt_surface = input_font.render('', True, BLACK)
+                    login_password.txt_surface = input_font.render('', True, BLACK)
+                elif start_rect.collidepoint(pos):
+                    game_state = GAME
+                    reset_game()
+                elif rules_rect.collidepoint(pos):
+                    game_state = RULES
+                elif load_game_rect.collidepoint(pos) and os.path.exists(SAVE_FILE):
+                    if load_game():
+                        game_state = GAME
+                elif exit_rect.collidepoint(pos):
+                    running = False
 
     elif game_state == RULES:
         back_rect = draw_rules()
@@ -434,14 +781,14 @@ while running:
                 running = False
             elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
                 if back_rect.collidepoint(event.pos):
-                    game_state = MENU  # Возврат в меню
+                    game_state = MENU
 
     elif game_state == GAME:
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 running = False
             elif event.type == pg.KEYDOWN:
-                if event.key == pg.K_ESCAPE:  # Обработка ESC
+                if event.key == pg.K_ESCAPE:
                     game_state = MENU
                     reset_game()
                 if event.key == pg.K_s and (pg.key.get_mods() & pg.KMOD_CTRL):
@@ -450,8 +797,6 @@ while running:
                 mouse_x, mouse_y = event.pos
                 col = mouse_x // 160
                 row = mouse_y // 160
-
-                # print(col, row)
 
                 if game_over:
                     draw_game_over()
